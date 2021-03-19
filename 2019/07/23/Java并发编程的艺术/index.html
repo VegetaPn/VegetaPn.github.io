@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 5.4.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"yanhaonan.me","root":"/","scheme":"Pisces","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":false,"show_result":false,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}}};
+  </script>
+
+  <meta name="description" content="[Note] Java 并发编程的艺术原子性 32位处理器：通过总线锁或对缓存加锁的方式 总线锁：处理器在总线上输出 #LOCK 信号缓存锁：“缓存锁定” Java：通过锁和循环CAS的方式">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Note -- Java 并发编程的艺术">
+<meta property="og:url" content="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/index.html">
+<meta property="og:site_name" content="Yan Haonan">
+<meta property="og:description" content="[Note] Java 并发编程的艺术原子性 32位处理器：通过总线锁或对缓存加锁的方式 总线锁：处理器在总线上输出 #LOCK 信号缓存锁：“缓存锁定” Java：通过锁和循环CAS的方式">
+<meta property="og:locale">
+<meta property="og:image" content="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/t5-5-i.jpg">
+<meta property="og:image" content="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/2.jpg">
+<meta property="article:published_time" content="2019-07-22T16:04:13.000Z">
+<meta property="article:modified_time" content="2021-03-19T05:36:32.601Z">
+<meta property="article:author" content="Yan Haonan">
+<meta property="article:tag" content="Java">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/t5-5-i.jpg">
+
+<link rel="canonical" href="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-Hans'
+  };
+</script>
+
+  <title>Note -- Java 并发编程的艺术 | Yan Haonan</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="Toggle navigation bar">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Yan Haonan</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+      <p class="site-subtitle" itemprop="description">http://yanhaonan.me</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>Home</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>About</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>Tags</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>Archives</a>
+
+  </li>
+  </ul>
+</nav>
+
+
+
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-Hans">
+    <link itemprop="mainEntityOfPage" href="http://yanhaonan.me/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Yan Haonan">
+      <meta itemprop="description" content="">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Yan Haonan">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          Note -- Java 并发编程的艺术
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">Posted on</span>
+
+              <time title="Created: 2019-07-23 00:04:13" itemprop="dateCreated datePublished" datetime="2019-07-23T00:04:13+08:00">2019-07-23</time>
+            </span>
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="far fa-calendar-check"></i>
+                </span>
+                <span class="post-meta-item-text">Edited on</span>
+                <time title="Modified: 2021-03-19 13:36:32" itemprop="dateModified" datetime="2021-03-19T13:36:32+08:00">2021-03-19</time>
+              </span>
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h1 id="Note-Java-并发编程的艺术"><a href="#Note-Java-并发编程的艺术" class="headerlink" title="[Note] Java 并发编程的艺术"></a>[Note] Java 并发编程的艺术</h1><p>原子性</p>
+<p>32位处理器：<br>通过总线锁或对缓存加锁的方式</p>
+<p>总线锁：处理器在总线上输出 #LOCK 信号<br>缓存锁：“缓存锁定”</p>
+<p>Java：<br>通过锁和循环CAS的方式</p>
+<span id="more"></span>
+
+<p>循环CAS：循环进行CAS直到成功为止<br>问题解决：<br>ABA问题：加入版本号 AutomicStampedReference<br>循环时间开销大：JVM支持CPU提供的pause指令<br>只能保证一个共享变量的原子操作：使用锁；将多个共享变量合为一个变量；AutomicReference</p>
+<p>锁机制：偏向锁、轻量级锁、互斥所</p>
+<h2 id="内存模型"><a href="#内存模型" class="headerlink" title="内存模型"></a>内存模型</h2><p>线程之间的通信机制：共享内存、消息传递</p>
+<p>Java的并发采用共享内存模型</p>
+<p>JMM (Java内存模型) 控制线程之间的通信，定义了线程与主内存之间的通信<br>线程之间的共享变量存储在主内存中<br>每个线程都有一个私有的本地内存，存储了该线程以读写共享变量的副本</p>
+<p>线程A更新本地内存 –&gt; 线程A刷主内存 –&gt; 线程B读取主内存 –&gt; 线程B更新本地内存</p>
+<p>重排序的3种类型</p>
+<ol>
+<li>编译器优化的重排序</li>
+<li>指令级并行的重排序</li>
+<li>内存系统的重排序</li>
+</ol>
+<p><strong>happens-before</strong></p>
+<p>前一个操作执行的结果对后一个操作可见，且前一个操作按顺序排在第二个操作之前<br>不一位置前一个操作必须在后一个操作之前执行</p>
+<ul>
+<li>程序顺序规则</li>
+<li>监视器锁规则</li>
+<li>volatile变量规则</li>
+<li>传递性</li>
+</ul>
+<p><strong>数据依赖性</strong></p>
+<ul>
+<li>写后读</li>
+<li>写后写</li>
+<li>读后写</li>
+</ul>
+<p><strong>as-if-serial</strong></p>
+<p>不管怎么重排序，单线程程序的执行结果不能被改变</p>
+<p><strong>猜测执行</strong></p>
+<p>在多线程中，对存在控制依赖的操作重排序，可能会改变程序的运行结果</p>
+<h3 id="顺序一致性"><a href="#顺序一致性" class="headerlink" title="顺序一致性"></a>顺序一致性</h3><p><strong>数据竞争</strong></p>
+<p><strong>顺序一致性内存模型</strong></p>
+<p>理想的一致性内存模型</p>
+<ol>
+<li>一个线程中的所有操作必须按照程序的顺序来执行</li>
+<li>所有线程都只能看到一个单一的操作执行顺序。每个操作都必须原子执行且立刻对所有线程可见</li>
+</ol>
+<p>JMM中没有这个保证</p>
+<p>在JMM中，临界区内的代码可以重排序</p>
+<p>在不改变（正确同步的）程序执行结果的前提下，尽可能的为编译器和处理器的优化打开方便之门</p>
+<p><strong>未同步程序的执行特性</strong></p>
+<ul>
+<li>单线程内的操作不保证按程序的顺序执行</li>
+<li>不保证所有线程能看到一致的操作执行顺序</li>
+<li>不保证对64位的long型和double型变量的写操作具有原子性<ul>
+<li>性能考虑，JVM可能拆分为两个32位的写操作来进行</li>
+</ul>
+</li>
+</ul>
+<p>总线会同步试图并发使用总线的事务</p>
+<h3 id="volatile的内存语义"><a href="#volatile的内存语义" class="headerlink" title="volatile的内存语义"></a>volatile的内存语义</h3><p>对volatile变量的单个读/写，看成是使用同一个锁对这些单个读/写操作做了同步<br>volatile++不具有原子性</p>
+<p>volatile变量的特性</p>
+<ul>
+<li>可见性</li>
+<li>原子性</li>
+</ul>
+<p>volatile的写-读可以实现线程间的通信</p>
+<p><strong>volatile写的内存语义</strong></p>
+<p>当写一个volatile变量时，JMM会把该线程对应的本地内存中对应的共享变量值刷新到主内存</p>
+<p><strong>volatile读的内存语义</strong></p>
+<p>当读一个volatile变量时，JMM会把该线程对应的本地内存置位无效。线程接下来将从主内存中读取共享变量</p>
+<p><strong>volatile内存语义的实现</strong></p>
+<p>JMM会分别限制编译器重排序和处理器重排序</p>
+<p>针对编译器制定的重排序规则：</p>
+<ul>
+<li>当第二个操作是volatile写，不管第一个操作是什么，都不能重排序。确保volatile写之前的操作不会被重排序到volatile写之后</li>
+<li>当第一个操作是volatile读，不管第二个操作是什么，都不能重排序。确保volatile读之后的操作不会被重排序到volatile读之前</li>
+<li>当第一个操作是volatile写，第二个操作是volatile读时，不能重排序</li>
+</ul>
+<p>生成字节码时，编译器会插入内存屏障来禁止特定类型的处理器重排序：</p>
+<ul>
+<li>在每个volatile写操作的前面插入一个StoreStore屏障</li>
+<li>在每个volatile写操作的后面插入一个StoreLoad屏障</li>
+<li>在每个volatile读操作的后面插入一个LoadLoad屏障</li>
+<li>在每个volatile读操作的后面插入一个LoadStore屏障</li>
+</ul>
+<p>编译器可以根据具体情况省略不必要的屏障</p>
+<p>JSR-133增强了volatile的内存语义<br>旧的Java内存模型允许volatile变量与普通变量重排序，volatile的写-读没有锁的释放-获取的内存语义</p>
+<p>JSR-133严格限制了volatile变量与普通变量的重排序，确保volatile的写-读和锁的释放-获取具有相同的内存语义</p>
+<h3 id="锁的内存语义"><a href="#锁的内存语义" class="headerlink" title="锁的内存语义"></a>锁的内存语义</h3><p><strong>锁的释放和获取的内存语义</strong></p>
+<p>线程释放锁时，JMM会把该线程对应的本地内存中的共享变量刷新到主内存中</p>
+<p>线程获取锁时，JMM会把该线程对应的本地内存置为无效</p>
+<p><strong>ReentrantLock</strong></p>
+<p>利用volatile变量</p>
+<p>公平锁：<br>加锁方法首先读volatile变量state；<br>解锁方法在释放锁的最后写volatile变量state</p>
+<p>非公平锁：<br>释放：和公平锁相同<br>获取：以原子操作的方式更新state变量。CAS，具有volatile读和写的内存语义</p>
+<h3 id="concurrent包的实现"><a href="#concurrent包的实现" class="headerlink" title="concurrent包的实现"></a>concurrent包的实现</h3><p><strong>Java线程间的通信方式</strong></p>
+<ul>
+<li>A线程写volatile变量，B线程读</li>
+<li>A线程写volatile变量，B线程用CAS更新</li>
+<li>A线程用CAS更新volatile变量，B线程读</li>
+<li>A线程用CAS更新volatile变量，B线程用CAS更新</li>
+</ul>
+<p>通用化实现模式：</p>
+<ol>
+<li>声明共享变量为volatile</li>
+<li>使用CAS的原子条件更新来实现线程之间的同步</li>
+<li>同时配合以volatile的读/写和CAS所具有的的volatile读写的内存语义来实现线程之间的通信</li>
+</ol>
+<h3 id="final域的内存语义"><a href="#final域的内存语义" class="headerlink" title="final域的内存语义"></a>final域的内存语义</h3><p><strong>重排序规则</strong></p>
+<ol>
+<li>在构造函数内对一个final域的写入，与虽有把这个被构造对象的引用赋值给一个引用变量，这两个操作之间不能重排序</li>
+<li>初次读一个包含final域的对象的引用，与随后初次读这个final域，这两个操作之间不能重排序</li>
+</ol>
+<p><strong>写final域的重排序规则</strong></p>
+<p>禁止把final域的写 重排序到构造函数之外</p>
+<ol>
+<li>JMM禁止编译器把final域的写 重排序到构造函数之外</li>
+<li>编译器会在final域的写之后，构造函数的return之前，插入一个StoreStore屏障</li>
+</ol>
+<p>确保在对象引用被任意线程可见之前，对象的final域已经被正确的初始化过了（普通域不具有这个保障）</p>
+<p><strong>读final域的重排序规则</strong></p>
+<p>在一个线程中，初次读对象引用与初次读该对象包含的final域，JMM禁止处理器重排序这两个操作（仅针对处理器）<br>编译器会在读final域操作的前面插入一个LoadLoad屏障</p>
+<p><strong>当final域为引用类型</strong></p>
+<p>在构造函数内对一个final引用的对象的成员域的写入，与随后在构造函数外把这个被构造对象的引用赋值给一个引用变量，这两个操作之间不能重排序</p>
+<p><strong>溢出</strong></p>
+<p>在构造函数内部，不能让这个被构造对象的引用被其他线程所见（“逸出”）</p>
+<p><strong>final语义在处理器中的实现</strong></p>
+<p>背景-内存语义：写final域的重排序规则会要求编译器在final域的写之后，构造函数return之前插入StoreStore屏障<br>读final域的重排序规则要求编译器在读final域前插入一个LoadLoad屏障</p>
+<p>x86处理器：final域的读/写不会插入任何内存屏障<br>由于不会对写-写操作做重排序，写final域所需的StoreStore会省略掉<br>由于不会对存在间接依赖关系的操作做重排序，读final域需要的LoadLoad也会省略掉</p>
+<h3 id="happens-before"><a href="#happens-before" class="headerlink" title="happens-before"></a>happens-before</h3><p><strong>定义</strong></p>
+<ol>
+<li>如果一个操作happens-before另一个操作，那么第一个操作的执行结果对第二个操作可见，而且第一个操作的执行顺序排在第二个操作之前</li>
+<li>两个操作存在happens-before关系，并不意味着Java的具体实现必须按照happens-before关系指定的顺序执行。如果重排序之后的执行结果，与按happens-before关系来执行的结果一致，那么这种重排序并不非法</li>
+</ol>
+<p>as-if-serial语义保证单线程内程序的执行结果不被改变，happens-before关系保证正确同步的多线程程序的执行结果不被改变<br>程序顺序规则可以看成是对as-if-serial的封装</p>
+<p>JMM将happens-before要求禁止的重排序分为了两类</p>
+<ol>
+<li>会改变程序结果的重排序 – 必须禁止</li>
+<li>不会改变程序结果的重排序 – 不做要求</li>
+</ol>
+<p><strong>happens-before规则</strong></p>
+<ol>
+<li>程序顺序规则：一个线程中的每个操作，happens-before于该线程的任一后续操作</li>
+<li>监视器锁规则：对一个锁的解锁，happens-before于随后对这个锁的加锁</li>
+<li>volatile变量规则：对一个volatile域的写，happens-before于任意后续对这个volatile域的读</li>
+<li>传递性</li>
+<li>start()规则：如果线程A执行操作ThreadB.start()，那么A线程的ThreadB.start()操作happens-before于线程B中的任意操作</li>
+<li>join()规则：如果线程A执行操作ThreadB.join()并返回成功，那么线程B中的任意操作happens-before于线程A从ThreadB.join()操作成功返回</li>
+</ol>
+<h3 id="双重检查锁定与延迟初始化"><a href="#双重检查锁定与延迟初始化" class="headerlink" title="双重检查锁定与延迟初始化"></a>双重检查锁定与延迟初始化</h3><p>双重检查锁定的问题：第一次判断对象是否为null时，instance引用的对象可能还没有完成初始化</p>
+<ol>
+<li>分配对象的内存空间</li>
+<li>初始化对象</li>
+<li>设置instance指向内存空间</li>
+</ol>
+<p>其中2和3可能重排序</p>
+<p><strong>解决方案</strong></p>
+<p>思路1：禁止2和3重排序<br>思路2：允许2和3重排序，但是禁止其他线程看到这个重排序</p>
+<p><strong>基于volatile的解决方案</strong></p>
+<p>将instance声明为volatile型<br>禁止2和3的重排序</p>
+<p><strong>基于类初始化的解决方案</strong></p>
+<blockquote>
+<p>Initialization On Demand Holder idiom</p>
+</blockquote>
+<p>instance holder<br>JVM在类的初始化阶段（即在Class被加载后，且被线程使用前），会执行线程的初始化。在执行类的期间，JVM会去获取一个锁。这个锁可以同步多个线程对同一个类的初始化<br>允许2和3重排序，但是禁止其他线程看到这个重排序</p>
+<p>在首次发生下列任意一种情况时，一个类或接口类型T将被立即初始化</p>
+<ol>
+<li>T是一个类，而且一个T类型的实例被创建</li>
+<li>T是一个类，且T中声明的一个静态方法被调用</li>
+<li>T中声明的一个静态字段被赋值</li>
+<li>T中声明的一个静态字段被使用，而且这个字段不是一个常量字段</li>
+<li>T是一个顶级类，而且一个断言语句嵌套在T内部被执行</li>
+</ol>
+<p>对于每一个类或接口C，都有一个唯一的初始化锁LC与之对应</p>
+<p>类初始化的处理过程：</p>
+<ol>
+<li>通过在Class对象上同步（即获取Class对象的初始化锁），来控制类或接口的初始化。这个获取锁的线程会一直等待，直到当前线程能够获取到这个初始化锁</li>
+<li>获取到锁的线程（A）执行类的初始化，同时其他线程（B）在初始化锁对应的condition上等待</li>
+<li>线程A设置state=initialized, 然后唤醒在condition中等待的所有线程</li>
+<li>线程B结束类的初始化处理</li>
+</ol>
+<p>按程序类型，Java程序的内存可见性保证可以分为3类</p>
+<ul>
+<li>单线程程序，不会出现内存可见性问题</li>
+<li>正确同步的多线程程序。具有顺序一致性（程序的执行结果与该程序在顺序一致性内存模型中的执行结果相同）</li>
+<li>未同步/未正确同步的多线程程序。（JMM提供最小安全性保障：线程执行时读取到的值要么是之前某个线程写入的值，要么是默认值）</li>
+</ul>
+<h2 id="Java并发编程基础知识"><a href="#Java并发编程基础知识" class="headerlink" title="Java并发编程基础知识"></a>Java并发编程基础知识</h2><h3 id="线程"><a href="#线程" class="headerlink" title="线程"></a>线程</h3><p>现代操作系统调度的最小单元</p>
+<p><strong>为什么使用多线程</strong></p>
+<ol>
+<li>更多的处理器核心</li>
+<li>更快的响应时间（比如将一部分操作异步处理）</li>
+<li>更好的编程模型</li>
+</ol>
+<p>现代操作系统基本采用时分的形式调度运行的线程。线程的优先级决定线程需要或者少分配一些处理器资源的线程属性</p>
+<p>程序正确性不能依赖线程的优先级，有些操作系统会忽略线程优先级的设定</p>
+<p><strong>线程的状态</strong></p>
+<ul>
+<li>NEW</li>
+<li>RUNNABLE</li>
+<li>BLOCKED</li>
+<li>WAITING</li>
+<li>TIME_WAITING</li>
+<li>TERMINATED</li>
+</ul>
+<p><strong>Daemon线程</strong></p>
+<p>支持型线程，用作程序中后台调度以及支持性工作<br>一个JVM中不存在非Daemon线程的时候，JVM将会退出</p>
+<p>JVM退出时Daemon线程中的finally块并不一定会执行</p>
+<p><strong>线程中断</strong></p>
+<p>中断可以理解为线程的一个标识位属性，表示一个运行中的线程是否被其他线程进行了中断操作<br>线程通过检查自身是否被中断来进行相应<br>在线程抛出InterruptedException之前JVM会先将该线程的中断表示位清除，此时调用isInterrupted()将会返回false</p>
+<p><strong>过期的 suspend(), resume(), stop()</strong></p>
+<p>不建议使用<br>会带来副作用，不保证对资源的正确释放，可能导致程序工作在不确定状态下</p>
+<p><strong>安全的终止线程</strong></p>
+<ul>
+<li>使用thread.interrupt()</li>
+<li>使用volatile boolean变量进行控制</li>
+</ul>
+<p><strong>线程间的通信</strong></p>
+<p><strong>volatile和synchronized</strong></p>
+<p>synchronized<br>同步块的实现使用了monitorenter和monitorexit指令<br>同步方法依靠方法修饰符上的ACC_SYNCHRONIZED来完成的<br>本质上是对一个对象的monitor进行获取，如果获取失败，线程进入同步队列，线程状态变为BLOCKED。当获得了锁的线程释放了锁，则该释放操作唤醒阻塞在同步队列中的线程，使其重新尝试对监视器的获取</p>
+<p><strong>等待/通知机制</strong></p>
+<p>线程A调用了对象O的wait()方法进入等待状态，而另一个线程B调用了对象O的notify()或者notifyAll()方法，线程A收到通知后从对象O的wait()方法返回，进而执行后续操作</p>
+<p>调用wait()方法后，会释放对象的锁<br>从wait()方法返回的前提是该线程获取到了对象的锁</p>
+<ul>
+<li>使用wait(), notify(), notifyAll()时需要先对调用对象加锁</li>
+<li>调用wait()方法后，线程状态由RUNNING变为WAITING，并将当前线程放置到对象的等待队列</li>
+<li>notify()或notifyAll()方法调用后，等待线程依旧不会从wait()返回，需要调用notify()或notifyAll()的线程释放锁之后，等待线程才有机会从wait()返回</li>
+<li>notify()方法将等待队列中的一个等待线程从等待队列中移到同步队列中，notifyAll方法将等待队列中所有的线程全部移到同步队列，被移动的线程状态从WAITTING变为BLOCKED</li>
+<li>从wait()方法返回的前提是获得了调用对象的锁</li>
+</ul>
+<p><strong>等待/通知的经典范式</strong></p>
+<p>等待方遵循如下原则：</p>
+<ol>
+<li>获取对象的锁</li>
+<li>如果条件不满足，调用对象的wait()方法，被通知后仍要检查条件</li>
+<li>条件满足则执行对应的逻辑</li>
+</ol>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">synchronized(对象) &#123;</span><br><span class="line">    while(条件不满足) &#123;</span><br><span class="line">        对象.wait();</span><br><span class="line">    &#125;</span><br><span class="line">    对应的处理逻辑;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>通知方遵循如下原则：</p>
+<ol>
+<li>获取对象的锁</li>
+<li>改变条件</li>
+<li>通知所有等待在对象上的线程</li>
+</ol>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">synchronized(对象) &#123;</span><br><span class="line">    改变条件;</span><br><span class="line">    对象.notifyAll();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><strong>管道输入/输出流</strong></p>
+<p>主要用于线程间的数据传输，传输的媒介为内存<br>具体实现：PipedOutputStream, PipedInputStream, PipedReader, PipedWriter. 前两种面向字节，后两种面向字符</p>
+<p>对于Piped类型的流，必须要先调用connect方法进行绑定</p>
+<p><strong>Thread.join()</strong></p>
+<p>当前线程A等待thread线程终止之后才从thread.join()返回<br>或者thread.join(long millis)</p>
+<p>join()方法：</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">&#x2F;&#x2F; 加锁当前线程对象</span><br><span class="line">public final synchronized void join() throws InterruptedException &#123;</span><br><span class="line">    &#x2F;&#x2F; 条件不满足，继续等待</span><br><span class="line">    while(isAlive()) &#123;</span><br><span class="line">        wait(0);</span><br><span class="line">    &#125;</span><br><span class="line">    &#x2F;&#x2F; 条件符合，方法返回</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>当线程终止时，会调用线程自身的notifyAll方法，通知所有等待在该线程对象上的线程</p>
+<p>和等待/通知经典范式一致</p>
+<p><strong>ThreadLocal的使用</strong></p>
+<p>线程变量，以ThreadLocal对象为键，任意对象为值的存储结构<br>被附带在线程上，一个线程可以根据一个ThreadLocal对象查询到绑定在这个线程上的一个值</p>
+<p>通过set(T)方法来设置一个值，在当前线程下再通过get()方法获取到原先设置的值</p>
+<h3 id="线程应用实例"><a href="#线程应用实例" class="headerlink" title="线程应用实例"></a>线程应用实例</h3><p><strong>等待超时模式</strong></p>
+<p>在等待/通知范式基础上增加了超时控制，使得该模式相比原有范式更具灵活性</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">public synchronized Object get(long millis) throws InterruptedException &#123;</span><br><span class="line">    long future &#x3D; System.currentTimeMillis() + millis;</span><br><span class="line">    long remaining &#x3D; millis;</span><br><span class="line">    &#x2F;&#x2F; 当超时大于0并且result返回值不满足要求</span><br><span class="line">    while ((result &#x3D;&#x3D; null) &amp;&amp; remaining &gt; 0) &#123;</span><br><span class="line">        wait(remaining);</span><br><span class="line">        remaining &#x3D; future - System.currentTimeMillis();</span><br><span class="line">    &#125;</span><br><span class="line">    return result;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p><strong>线程池技术</strong></p>
+<ul>
+<li>消除了频繁创建和消亡线程的系统资源开销</li>
+<li>面对过量任务的提交能够平缓的劣化</li>
+</ul>
+<p>本质上使用了一个线程安全的工作队列连接工作者线程和客户端线程，客户端线程将任务放入工作者队列后便返回，工作者线程不断地从工作队列上取出工作并执行。<br>当工作队列为空时，所有的工作者线程均等待在工作队列上，当有客户端提交了一个任务后便会通知任意一个工作者线程</p>
+<p>当客户端调用execute(Job)方法时，会不断地向任务列表jobs中添加Job，而每个工作者线程会不断地从jobs上取出一个Job进行执行，当jobs为空时，工作者线程进入等待状态</p>
+<p>添加一个Job后，对工作队列jobs调用了其notify()方法（不是notifyAll，为了获得更小的开销）</p>
+<h3 id="Java中的锁"><a href="#Java中的锁" class="headerlink" title="Java中的锁"></a>Java中的锁</h3><h4 id="Lock接口"><a href="#Lock接口" class="headerlink" title="Lock接口"></a>Lock接口</h4><p>显示的获取和释放锁</p>
+<p>特性</p>
+<ul>
+<li>尝试非阻塞的获取锁</li>
+<li>能被中断的获取锁：获取到锁的线程能够响应中断，当获取到锁的线程被中断时，中断异常将会抛出，同时锁会被释放</li>
+<li>超时获取锁</li>
+</ul>
+<p>基本操作</p>
+<ul>
+<li>lock()</li>
+<li>lockInteruptibly()</li>
+<li>tryLock()</li>
+<li>tryLock(long time, TimeUnit unit) throws InterruptedException</li>
+<li>unlock()</li>
+<li>newCondition()</li>
+</ul>
+<h4 id="队列同步器-AbstractQueuedSynchronizer"><a href="#队列同步器-AbstractQueuedSynchronizer" class="headerlink" title="队列同步器 AbstractQueuedSynchronizer"></a>队列同步器 AbstractQueuedSynchronizer</h4><p><strong>AQS的接口</strong></p>
+<p>构建锁或者其他同步组件的基础框架<br>使用了一个int成员变量表示同步状态，通过内置的FIFO队列来完成资源获取线程的排队工作</p>
+<p>定义了若干同步状态获取和释放的方法来供自定义同步组件使用<br>自定义同步组件使用同步器提供的模板方法来实现自己定义的同步语义</p>
+<p>面向的是锁的实现者，简化了锁的实现方式</p>
+<p>使用getState(), setState(int newState), compareAndSetState(int expect, int update)来访问或者修改同步状态</p>
+<p>同步器可重写的方法：</p>
+<ul>
+<li>tryAcquire(int arg): 独占式获取同步状态</li>
+<li>tryRelease(int arg)：独占式释放同步状态</li>
+<li>tryAcquireShared(int arg): 共享式获取同步状态，同一时刻可以有多个线程获取到同步状态</li>
+<li>tryReleaseShared(int arg): 共享式释放同步状态</li>
+<li>isHeldExclusively(): 当前同步器是否在独占模式下被线程占用，一般表示是否被当前线程所占</li>
+</ul>
+<p>同步器提供的模板方法：<br>基本上分为三类：独占式获取与释放同步状态，共享式获取与释放同步状态，查询同步队列中的等待线程情况</p>
+<p>独占锁：在同一个时刻只能有一个线程获取到锁，而其他获取锁的线程只能处于同步队列中等待，只有获取锁的线程释放了锁，后继的线程才能够获取锁</p>
+<p><strong>AQS的实现</strong></p>
+<p>同步队列</p>
+<p>同步器依赖内部的同步队列（一个FIFO双向队列）来完成同步状态的管理</p>
+<ul>
+<li>当前线程获取同步状态失败时，同步器会将当前线程已经等待状态等信息构造成为一个节点（Node）并将其加入同步队列，同时会阻塞当前线程</li>
+<li>当同步状态释放时，会把首节点中的线程唤醒，使其再次尝试获取同步状态</li>
+</ul>
+<p>加入同步队列的过程需要保证钱程安全<br>同步器提供了一个基于CAS的设置尾节点的方法 compareAndSetTail(Node expect, Node update)</p>
+<p>独占式同步状态获取与释放</p>
+<p>首先调用自定义同步器实现的tryAcquire方法，如果同步状态获取失败，则构造同步节点（独占式Node.EXECUSIVE)，并通过addWaiter方法将该节点加入到同步队列的尾部，最后调用acquireQueued(Node node, int arg)方法，使得该节点以”死循环“的方式获取同步状态。如果获取不到则阻塞节点中的线程，而被阻塞线程的环境主要依靠前驱节点的出队或阻塞线程被中断来实现</p>
+<p>独占式同步状态获取流程：</p>
+<img src="/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/t5-5-i.jpg" class="">
+
+<p>通过调用同步器的release(int arg)方法可以释放同步状态，释放同步状态之后会唤醒其后继节点</p>
+<p>共享式同步状态获取与释放</p>
+<p>eg：文件的读操作，可以共享式访问</p>
+<p>共享式访问资源时，其他共享式的访问均被允许，独占式访问被阻塞<br>独占式访问资源时，同一时刻其他访问均被阻塞</p>
+<p>在acquireShared(int arg)方法中，同步器调用tryAcquireShared(int arg)方法尝试获取同步状态<br>在共享式获取的自旋过程中，成功获取到同步状态并退出自旋的条件就是tryAcquireShared(int arg)方法返回值大于等于0。如果当前节点的前驱为头节点时，尝试获取同步状态</p>
+<p>通过调用releaseShared(int arg)释放同步状态<br>释放同步状态后唤醒后续处于等待状态的节点</p>
+<p>独占式超时获取同步状态</p>
+<p>自旋过程中，当节点的前驱节点为头节点时尝试获取同步状态，如果获取成功则返回<br>如果获取失败，判断是否超时，如果没有超时，重新计算时间间隔nanosTimeout，然后使当前线程等待nanosTimeout纳秒<br>如果nanosTimeout小于等于spinForTimeoutThreshold(1000纳秒)时，将不会使该线程进行超市等待，而是进入快速的自旋过程</p>
+<p>同步器作为一个桥梁，连接线程访问以及同步状态控制等底层技术与不同并发组件的接口语义</p>
+<h4 id="重入锁-ReentrantLock"><a href="#重入锁-ReentrantLock" class="headerlink" title="重入锁 ReentrantLock"></a>重入锁 ReentrantLock</h4><p>能够支持一个线程对资源的重复加锁，在调用lock方法时，已经获取到锁的线程，能够再次调用lock方法获取锁而不被阻塞<br>支持获取锁时的公平和非公平性选择</p>
+<p>synchronized隐式的支持重进入</p>
+<p>获取锁的公平性：<br>如果在绝对时间上，先对锁进行获取的请求一定先被满足，那么这个锁是公平的。反之，是不公平的<br>公平的获取锁，也就是等待时间最长的线程最优先获取锁，也可以说锁获取是顺序的</p>
+<ol>
+<li>线程再次获取锁。锁需要去识别获取锁的线程是否为当前占据锁的线程，如果是，则再次成功获取</li>
+<li>锁的释放。线程重复n次获取了锁，随后在第n次释放该锁后，其他线程能够获取到该锁。锁的最终释放要求锁对于获取进行计数自增，锁被释放时，计数自减</li>
+</ol>
+<p>tryAcquire方法与nofairTryAcquire方法的区别，判断条件多了hasQueuedPredecessors方法，如果该方法返回true，表示有线程比当前线程更早的请求获取锁，因此需要等待前驱线程获取并释放锁之后才能继续获取锁</p>
+<h4 id="读写锁"><a href="#读写锁" class="headerlink" title="读写锁"></a>读写锁</h4><p>排它锁：在同一时刻只允许一个线程访问<br>读写锁：在同一时刻可以允许多个读线程访问，但是在写线程访问时，所有的读线程和其他写线程均被阻塞</p>
+<p>读写锁维护了一对锁，一个读锁和一个写锁</p>
+<p><strong>读写状态的设计</strong></p>
+<p>读写锁的自定义同步器需要在同步状态（一个整型变量）上维护多个读线程和一个写线程的状态<br>高16位表示读，低16位表示写<br>假设当前同步状态值为S，写状态等于S&amp;0x0000FFFF(将高16位全部抹去)<br>读状态等于S&gt;&gt;&gt;16(无符号补0右移16位)<br>当写状态增加1时，等于S+1<br>当读状态增加1时，等于S+(1&lt;&lt;16), 也就是S+0x0010000</p>
+<p>S不等于0时，当写状态等于0时，则读状态大于0，即读锁已被获取</p>
+<p><strong>写锁的获取与释放</strong></p>
+<p>如果当前线程已经获取了写锁，则增加写状态。如果当前线程在获取写锁时，读锁已经被获取或者该线程不是已经获取写锁的线程，则当前线程进入等待状态</p>
+<p><strong>读锁的获取与释放</strong></p>
+<p>如果当前线程已经获取了读锁，则增加读状态<br>如果当前线程在获取读锁时，写锁已被其他线程获取，则进入等待状态</p>
+<p><strong>锁降级</strong></p>
+<p>写锁降级成为读锁：把持住（当前拥有的写锁），再获取到读锁，随后释放（先前拥有的）写锁的过程</p>
+<p>主要是为了保证数据的可见性<br>如果当前线程不获取读锁而是直接释放写锁，假设此刻另一个线程T获取了写锁并修改了数据，那么当前线程无法感知T的数据更新。如果当前线程遵循锁降级获取读锁，则T将会阻塞，知道当前线程使用数据并释放锁之后，T才能够获取写锁进行数据更新</p>
+<h4 id="LockSupport工具"><a href="#LockSupport工具" class="headerlink" title="LockSupport工具"></a>LockSupport工具</h4><p>定义了一组的公共静态方法，提供了最基本的线程阻塞和唤醒功能，是构建同步组件的基础工具</p>
+<p>定义了一组已park开头的用来阻塞当前线程，以及unpark(Thread thread)方法来唤醒一个被阻塞的线程</p>
+<h4 id="Condition接口"><a href="#Condition接口" class="headerlink" title="Condition接口"></a>Condition接口</h4><p>提供了类似Object的监视器方法，与Lock配合可以实现等待/通知模式</p>
+<p>一般会将Condition对象作为成员变量。当调用await方法后，当前线程会释放锁并在此等待，而其他线程调用Condition对象的signal方法通知当前线程后，当前线程才从await方法返回，并且在返回前已经获取了锁</p>
+<p><strong>等待队列</strong></p>
+<p>一个FIFO队列，队列的每个节点都包含了一个线程引用，该线程就是在Condition对象上等待的线程，如果一个线程调用了Condition.await()方法，那么该线程会释放锁、构造成节点加入等待队列并进入到等待状态</p>
+<p>Condition的实现是同步器的内部类，因此每个Condition实例都能够访问同步器提供的方法，相当于每个Condition都拥有所属同步器的引用</p>
+<p>当调用await()方法时，相当于同步队列的首节点（获取了锁的节点）移动到Condition的等待队列中<br>该方法会将当前线程构造成节点并加入等待队列中，然后释放同步状态，唤醒同步队列中的后继节点，然后当前线程会进入等待状态</p>
+<p>当等待队列中的节点被唤醒，则唤醒节点的线程开始尝试获取同步状态。如果不是通过其他线程调用Condition.signal()方法唤醒，而是对等待线程进行中断，则会抛出InterruptedExcepiton</p>
+<p>调用Condition的signal方法，将会唤醒在等待队列中等待时间最长的节点，在唤醒节点之前，会将节点移动到同步队列中</p>
+<p>被唤醒后的线程，将从await()方法中的while循环中退出，进而调用同步器的acquireQueued()方法加入到获取同步状态的竞争中</p>
+<p>成功获取同步状态之后，被唤醒的线程将从await()方法返回，此时线程已经成功的获取了锁</p>
+<h3 id="ConcurrentLinkedQueue"><a href="#ConcurrentLinkedQueue" class="headerlink" title="ConcurrentLinkedQueue"></a>ConcurrentLinkedQueue</h3><p>基于链接节点的无界线程安全队列<br>采用先进先出规则堆节点进行排序，采用cas实现</p>
+<img src="/2019/07/23/Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF/2.jpg" class="">
+
+<p><strong>入队列</strong></p>
+<ol>
+<li>将入队节点设置成当前队列尾节点的下一个节点</li>
+<li>更新tail节点，如果tail.next不为空，将入队节点设置为tail节点；如果tail.next为空，将入队节点设置为tail的next节点</li>
+</ol>
+
+    </div>
+
+    
+    
+    
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/Java/" rel="tag"># Java</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2019/05/12/Learning-How-to-Learn/" rel="prev" title="Learning-How-to-Learn">
+      <i class="fa fa-chevron-left"></i> Learning-How-to-Learn
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2019/12/23/%E7%AE%97%E6%B3%95%E5%AE%9E%E6%88%98%E6%80%BB%E7%BB%93/" rel="next" title="【UPDATING】算法实战总结">
+      【UPDATING】算法实战总结 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          Table of Contents
+        </li>
+        <li class="sidebar-nav-overview">
+          Overview
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#Note-Java-%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E7%9A%84%E8%89%BA%E6%9C%AF"><span class="nav-number">1.</span> <span class="nav-text">[Note] Java 并发编程的艺术</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%86%85%E5%AD%98%E6%A8%A1%E5%9E%8B"><span class="nav-number">1.1.</span> <span class="nav-text">内存模型</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%A1%BA%E5%BA%8F%E4%B8%80%E8%87%B4%E6%80%A7"><span class="nav-number">1.1.1.</span> <span class="nav-text">顺序一致性</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#volatile%E7%9A%84%E5%86%85%E5%AD%98%E8%AF%AD%E4%B9%89"><span class="nav-number">1.1.2.</span> <span class="nav-text">volatile的内存语义</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%94%81%E7%9A%84%E5%86%85%E5%AD%98%E8%AF%AD%E4%B9%89"><span class="nav-number">1.1.3.</span> <span class="nav-text">锁的内存语义</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#concurrent%E5%8C%85%E7%9A%84%E5%AE%9E%E7%8E%B0"><span class="nav-number">1.1.4.</span> <span class="nav-text">concurrent包的实现</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#final%E5%9F%9F%E7%9A%84%E5%86%85%E5%AD%98%E8%AF%AD%E4%B9%89"><span class="nav-number">1.1.5.</span> <span class="nav-text">final域的内存语义</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#happens-before"><span class="nav-number">1.1.6.</span> <span class="nav-text">happens-before</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%8F%8C%E9%87%8D%E6%A3%80%E6%9F%A5%E9%94%81%E5%AE%9A%E4%B8%8E%E5%BB%B6%E8%BF%9F%E5%88%9D%E5%A7%8B%E5%8C%96"><span class="nav-number">1.1.7.</span> <span class="nav-text">双重检查锁定与延迟初始化</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Java%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86"><span class="nav-number">1.2.</span> <span class="nav-text">Java并发编程基础知识</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E7%BA%BF%E7%A8%8B"><span class="nav-number">1.2.1.</span> <span class="nav-text">线程</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E7%BA%BF%E7%A8%8B%E5%BA%94%E7%94%A8%E5%AE%9E%E4%BE%8B"><span class="nav-number">1.2.2.</span> <span class="nav-text">线程应用实例</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Java%E4%B8%AD%E7%9A%84%E9%94%81"><span class="nav-number">1.2.3.</span> <span class="nav-text">Java中的锁</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#Lock%E6%8E%A5%E5%8F%A3"><span class="nav-number">1.2.3.1.</span> <span class="nav-text">Lock接口</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E9%98%9F%E5%88%97%E5%90%8C%E6%AD%A5%E5%99%A8-AbstractQueuedSynchronizer"><span class="nav-number">1.2.3.2.</span> <span class="nav-text">队列同步器 AbstractQueuedSynchronizer</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E9%87%8D%E5%85%A5%E9%94%81-ReentrantLock"><span class="nav-number">1.2.3.3.</span> <span class="nav-text">重入锁 ReentrantLock</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E8%AF%BB%E5%86%99%E9%94%81"><span class="nav-number">1.2.3.4.</span> <span class="nav-text">读写锁</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#LockSupport%E5%B7%A5%E5%85%B7"><span class="nav-number">1.2.3.5.</span> <span class="nav-text">LockSupport工具</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Condition%E6%8E%A5%E5%8F%A3"><span class="nav-number">1.2.3.6.</span> <span class="nav-text">Condition接口</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#ConcurrentLinkedQueue"><span class="nav-number">1.2.4.</span> <span class="nav-text">ConcurrentLinkedQueue</span></a></li></ol></li></ol></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">Yan Haonan</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">9</span>
+          <span class="site-state-item-name">posts</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">categories</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+          
+        <span class="site-state-item-count">6</span>
+        <span class="site-state-item-name">tags</span></a>
+      </div>
+  </nav>
+</div>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2021</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Yan Haonan</span>
+</div>
+  <div class="powered-by">Powered by <a href="https://hexo.io/" class="theme-link" rel="noopener" target="_blank">Hexo</a> & <a href="https://pisces.theme-next.org/" class="theme-link" rel="noopener" target="_blank">NexT.Pisces</a>
+  </div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+</body>
+</html>
